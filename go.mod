@@ -1,3 +1,3 @@
-module github.com/skylerblue333/database-migration-tool
+module github.com/skylerblue333/Database-Migration-Tool
 
 go 1.21
