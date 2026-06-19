@@ -1,102 +1,52 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
-	"os"
-	"sort"
-	"strings"
+	"net/http"
+	"sync"
+	"time"
 )
 
-// Mock Migration represents a database schema change
-type Migration struct {
-	ID          string
-	Description string
-	Applied     bool
+type ServiceState struct {
+	mu        sync.RWMutex
+	Processed int
+	Domain    string
 }
 
-type MigrationManager struct {
-	migrations map[string]*Migration
+var state = &ServiceState{Domain: "tool"}
+
+func handleHealth(w http.ResponseWriter, r *http.Request) {
+	state.mu.RLock()
+	defer state.mu.RUnlock()
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status":    "ok",
+		"domain":    state.Domain,
+		"processed": state.Processed,
+	})
 }
 
-func NewMigrationManager() *MigrationManager {
-	mm := &MigrationManager{
-		migrations: make(map[string]*Migration),
-	}
-	
-	// Load available migrations
-	mm.migrations["001_create_users"] = &Migration{"001_create_users", "Create users table", true}
-	mm.migrations["002_add_email_idx"] = &Migration{"002_add_email_idx", "Add index on email", false}
-	mm.migrations["003_create_posts"] = &Migration{"003_create_posts", "Create posts table", false}
-	
-	return mm
-}
-
-func (mm *MigrationManager) Status() {
-	fmt.Println("=== Database Migration Status ===")
-	
-	var keys []string
-	for k := range mm.migrations {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	
-	for _, k := range keys {
-		m := mm.migrations[k]
-		status := "[PENDING]"
-		if m.Applied {
-			status = "[APPLIED]"
-		}
-		fmt.Printf("%s %s - %s\n", status, m.ID, m.Description)
-	}
-}
-
-func (mm *MigrationManager) Migrate() {
-	fmt.Println("\nExecuting pending migrations...")
-	
-	var keys []string
-	for k := range mm.migrations {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	
-	count := 0
-	for _, k := range keys {
-		m := mm.migrations[k]
-		if !m.Applied {
-			log.Printf("Applying: %s...", m.ID)
-			// Simulate DB execution
-			m.Applied = true
-			count++
-		}
-	}
-	
-	if count == 0 {
-		fmt.Println("Database is up to date.")
-	} else {
-		fmt.Printf("Successfully applied %d migrations.\n", count)
-	}
+func handleProcess(w http.ResponseWriter, r *http.Request) {
+	state.mu.Lock()
+	state.Processed++
+	state.mu.Unlock()
+	w.WriteHeader(http.StatusAccepted)
+	fmt.Fprint(w, `{"status":"processing"}`)
 }
 
 func main() {
-	manager := NewMigrationManager()
-	
-	args := os.Args[1:]
-	if len(args) == 0 {
-		fmt.Println("Usage: db-migrate [status|up]")
-		os.Exit(1)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", handleHealth)
+	mux.HandleFunc("/process", handleProcess)
+
+	server := &http.Server{
+		Addr:         ":8080",
+		Handler:      mux,
+		ReadTimeout:  5 * time.Second,
+		WriteTimeout: 10 * time.Second,
 	}
-	
-	cmd := strings.ToLower(args[0])
-	switch cmd {
-	case "status":
-		manager.Status()
-	case "up":
-		manager.Status()
-		manager.Migrate()
-		fmt.Println()
-		manager.Status()
-	default:
-		fmt.Printf("Unknown command: %s\n", cmd)
-	}
+
+	log.Println("Server starting on :8080")
+	log.Fatal(server.ListenAndServe())
 }

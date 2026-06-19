@@ -1,7 +1,10 @@
-FROM python:3.11-slim
+FROM golang:1.21-alpine AS builder
 WORKDIR /app
-COPY requirements.txt .
-RUN pip install -r requirements.txt
 COPY . .
-EXPOSE 8000
-CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
+RUN CGO_ENABLED=0 GOOS=linux go build -o server main.go
+
+FROM alpine:latest
+WORKDIR /app
+COPY --from=builder /app/server .
+EXPOSE 8080
+CMD ["./server"]

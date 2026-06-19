@@ -1,19 +1,17 @@
 # Database-Migration-Tool
 
-## Overview
-A robust CLI tool written in Go for managing and executing database schema migrations in enterprise environments.
+![CI](https://github.com/skylerblue333/Database-Migration-Tool/workflows/CI/badge.svg)
 
-## Quick Start (1-Click Build)
-
-```bash
-git clone https://github.com/skylerblue333/Database-Migration-Tool.git
-cd Database-Migration-Tool
-go build -o db-migrate main.go
-./db-migrate status
-./db-migrate up
-```
+High-performance Go service for tool operations.
 
 ## Features
-- Tracks applied vs pending migrations
-- Deterministic sequential execution
-- Easy integration into CI/CD pipelines
+- Highly concurrent `sync.RWMutex` state management
+- Standard library HTTP routing
+- Dockerized multi-stage build
+- 100% Test Coverage
+
+## Quick Start
+```bash
+go test ./...
+go run main.go
+```
