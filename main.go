@@ -1,46 +1,53 @@
+// Database-Migration-Tool: Tracks and applies versioned database migrations
 package main
 
 import (
 	"encoding/json"
 	"log"
 	"net/http"
-	"sync"
+	"time"
 )
 
-type Store struct {
-	mu   sync.RWMutex
-	data map[string]string
+type Migration struct {
+	Version int    `json:"version"`
+	Name    string `json:"name"`
+	SQL     string `json:"sql"`
 }
 
-var store = Store{data: make(map[string]string)}
+var applied []Migration
 
 func handleProcess(w http.ResponseWriter, r *http.Request) {
-	var payload map[string]string
-	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+	var m Migration
+	if err := json.NewDecoder(r.Body).Decode(&m); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-
-	store.mu.Lock()
-	for k, v := range payload {
-		store.data[k] = v
+	for _, a := range applied {
+		if a.Version == m.Version {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]string{"status": "already_applied"})
+			return
+		}
 	}
-	store.mu.Unlock()
-
+	applied = append(applied, m)
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "processed"})
+	json.NewEncoder(w).Encode(map[string]interface{}{"status": "applied", "version": m.Version, "total": len(applied)})
 }
+
 
 func handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "healthy", "version": "3.0.0"})
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status":    "healthy",
+		"service":   "Database-Migration-Tool",
+		"timestamp": time.Now().Unix(),
+	})
 }
 
 func main() {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/v1/process", handleProcess)
 	mux.HandleFunc("/health", handleHealth)
-	
-	log.Println("Database-Migration-Tool running on :8080")
+	mux.HandleFunc("/api/v1/process", handleProcess)
+	log.Printf("Database-Migration-Tool running on :8080")
 	log.Fatal(http.ListenAndServe(":8080", mux))
 }
