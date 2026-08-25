@@ -1,11 +1,32 @@
-name: CI
-on: [push, pull_request]
+name: migration-ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
 jobs:
-  test:
+  verify:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-go@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
-      - run: go test -v ./...
+          go-version: '1.25.1'
+          cache: false
+      - name: Format
+        run: test -z "$(gofmt -l .)"
+      - name: Vet
+        run: go vet ./...
+      - name: Tests
+        run: go test -race -count=1 ./...
+      - name: Vulnerability scan
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+      - name: Build
+        run: CGO_ENABLED=0 go build -trimpath ./...
+      - name: Build image
+        run: docker build -t sky-migrations:ci .
+      - name: Verify non-root image
+        run: test "$(docker run --rm --entrypoint=/busybox/sh sky-migrations:ci -c 'id -u' 2>/dev/null || docker inspect -f '{{.Config.User}}' sky-migrations:ci)" != "0"
