@@ -41,6 +41,37 @@ func TestRegisterAndList(t *testing.T) {
 	}
 }
 
+func TestMethodAwareRoutes(t *testing.T) {
+	api := NewAPI(NewMigrationStore())
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	rr := httptest.NewRecorder()
+	api.routes().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /health expected 200, got %d", rr.Code)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/health", nil)
+	rr = httptest.NewRecorder()
+	api.routes().ServeHTTP(rr, req)
+	if rr.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("POST /health expected 405, got %d", rr.Code)
+	}
+}
+
+func TestRejectsTrailingJSON(t *testing.T) {
+	api := NewAPI(NewMigrationStore())
+	payload := `{"version":1,"name":"init","sql":"SELECT 1"} {"extra":true}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/migrations", strings.NewReader(payload))
+	rr := httptest.NewRecorder()
+	api.routes().ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected trailing JSON to return 400, got %d", rr.Code)
+	}
+	if api.store.Count() != 0 {
+		t.Fatalf("trailing JSON must not mutate store; count=%d", api.store.Count())
+	}
+}
+
 func TestDuplicateIsIdempotentAndConflictIsRejected(t *testing.T) {
 	api := NewAPI(NewMigrationStore())
 	payload := `{"version":1,"name":"init","sql":"CREATE TABLE users(id INT);"}`
