@@ -1,9 +1,11 @@
-FROM golang:1.21-alpine AS builder
-WORKDIR /app
-COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -o server main.go
-FROM alpine:latest
-WORKDIR /app
-COPY --from=builder /app/server .
+FROM golang:1.25.13-alpine AS builder
+WORKDIR /src
+COPY go.mod ./
+COPY main.go ./
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags='-s -w' -o /out/sky-migrations ./main.go
+
+FROM gcr.io/distroless/static-debian12:nonroot
+COPY --from=builder /out/sky-migrations /sky-migrations
+USER nonroot:nonroot
 EXPOSE 8080
-CMD ["./server"]
+ENTRYPOINT ["/sky-migrations"]

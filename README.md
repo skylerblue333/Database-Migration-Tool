@@ -1,61 +1,42 @@
-# Database Migration Tool
+# Sky Migration Registry
 
-Versioned database-migration service component for the SKYCOIN4444 ecosystem.
+**Status: engineering beta.** This repository is a bounded migration registration and validation service written in Go. It records migration metadata and content digests; it does **not** execute SQL against a database.
 
-## Current implementation
+## API
 
-- Go HTTP migration registry API
-- Migration payload validation
-- Positive version enforcement
-- Required name/SQL validation
-- Duplicate-version detection
-- Concurrency protection around migration state
-- Deterministic version ordering
-- Migration listing endpoint
-- Health endpoint
-- Automated Go tests for registration, deduplication, validation, and health
+- `GET /health` — liveness.
+- `GET /ready` — readiness.
+- `GET /metrics` — local request/rejection/registration counters.
+- `POST /api/v1/migrations` — register `{version,name,sql}` after validation.
+- `GET /api/v1/migrations` — return ordered metadata records without exposing SQL bodies.
 
-## Ecosystem role
+A repeated version with identical name/content is idempotent. Reusing a version with different content returns `409 Conflict`. SQL payloads are bounded to 256 KiB, names are restricted to safe characters, unknown JSON fields are rejected, and stored list responses expose SHA-256/size metadata rather than SQL text.
 
-**Database / Persistence → Schema Migration Boundary**
+## Verification
 
-This repository is a focused migration component. It is not itself a complete production database system and does not claim to execute SQL against a live database. Its strongest verified value is migration registration/validation and API behavior.
+```bash
+gofmt -w .
+go vet ./...
+go test -race -count=1 ./...
+go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+CGO_ENABLED=0 go build ./...
+docker build -t sky-migrations .
+```
 
-## Truthful status
+CI enforces those gates plus non-root container configuration.
 
-- Migration API: **implemented**
-- Tests: **implemented**
-- Persistence backend: **not integrated**
-- Actual SQL execution: **not implemented/verified**
-- Authentication/authorization: **not implemented/verified**
-- Production deployment: **not verified**
+## Example
 
-The original repository description used broad “professional-grade” and “enterprise” language without sufficient implementation evidence. This README intentionally reports the concrete capabilities instead. fileciteturn259file0
+```bash
+curl -sS -X POST http://localhost:8080/api/v1/migrations \
+  -H 'content-type: application/json' \
+  -d '{"version":1,"name":"create_users","sql":"CREATE TABLE users(id BIGINT PRIMARY KEY);"}'
+```
 
-## Consolidation approach
+## Product boundary
 
-Preserve this migration-domain implementation and compare it with the canonical database repositories before integration. The target architecture is a single migration boundary shared by SKYCOIN4444 production services, rather than separate migration systems per microservice.
+This is deliberately a migration **registry**, not a database migration executor. It currently uses process memory only. It does not claim durable history, transaction execution, rollback, schema introspection, PostgreSQL/MySQL/SQLite connectivity, distributed coordination, authentication/RBAC, encryption at rest, HA, or production deployment. Those require separate implementation and evidence.
 
-For live schema execution, persistence, locking, rollback, and migration-history requirements, evaluate mature open-source migration foundations appropriate to the actual database engine. Prefer proven projects over inventing a migration engine; preserve licenses and isolate the adapter from the domain API.
+For SKYCOIN4444, the stable HTTP contract can be used by deployment tooling to validate and fingerprint migration plans before a database-specific executor is introduced.
 
-## Commercial/enterprise value
-
-A reusable migration service can support enterprise deployment kits, managed-platform operations, and repeatable customer environments. Its market value depends on tested database adapters, safe rollback/forward migration behavior, authentication, auditability, documentation, and real customer adoption—not on repository size alone.
-
-## Production requirements
-
-Before production use:
-
-- connect a real supported database
-- execute migrations transactionally where supported
-- add migration checksums and immutable history
-- implement forward/rollback policy
-- add authentication and authorization
-- add structured logging and audit trails
-- add integration tests against the target database
-- run race/static/security analysis
-- add CI and deployment verification
-
-## License
-
-See the checked-in repository license and applicable third-party dependency licenses.
+See `SECURITY.md` for security assumptions.
