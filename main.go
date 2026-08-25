@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -20,7 +21,10 @@ import (
 	"time"
 )
 
-const maxMigrationBody = 256 << 10
+const (
+	maxMigrationBody = 256 << 10
+	maxRequestBody   = 2 << 20
+)
 
 var migrationNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
 
@@ -94,7 +98,12 @@ func (s *MigrationStore) List() []MigrationRecord {
 	sort.Slice(result, func(i, j int) bool { return result[i].Version < result[j].Version })
 	return result
 }
-func (s *MigrationStore) Count() int { s.mu.RLock(); defer s.mu.RUnlock(); return len(s.records) }
+
+func (s *MigrationStore) Count() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return len(s.records)
+}
 
 type API struct {
 	store    *MigrationStore
@@ -103,6 +112,7 @@ type API struct {
 }
 
 func NewAPI(store *MigrationStore) *API { return &API{store: store} }
+
 func (a *API) routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", a.handleHealth)
@@ -112,9 +122,14 @@ func (a *API) routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/migrations", a.handleList)
 	return requestSecurityHeaders(a.countRequests(mux))
 }
+
 func (a *API) countRequests(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { a.requests.Add(1); next.ServeHTTP(w, r) })
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		a.requests.Add(1)
+		next.ServeHTTP(w, r)
+	})
 }
+
 func requestSecurityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -122,14 +137,21 @@ func requestSecurityHeaders(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r)
 	})
 }
+
 func (a *API) handleRegister(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, maxMigrationBody+4096)
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBody)
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	var m Migration
 	if err := decoder.Decode(&m); err != nil {
 		a.rejected.Add(1)
 		writeError(w, http.StatusBadRequest, "invalid migration payload")
+		return
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		a.rejected.Add(1)
+		writeError(w, http.StatusBadRequest, "migration payload must contain exactly one JSON value")
 		return
 	}
 	record, created, err := a.store.Register(m)
@@ -150,21 +172,27 @@ func (a *API) handleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, status, map[string]any{"status": state, "migration": record})
 }
+
 func (a *API) handleList(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, a.store.List())
 }
+
 func (a *API) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "healthy", "service": "sky-migration-registry"})
 }
+
 func (a *API) handleReady(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
 }
+
 func (a *API) handleMetrics(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"requests_total": a.requests.Load(), "rejected_total": a.rejected.Load(), "migrations_registered": a.store.Count()})
 }
+
 func writeError(w http.ResponseWriter, status int, message string) {
 	writeJSON(w, status, map[string]string{"error": message})
 }
+
 func writeJSON(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
@@ -172,6 +200,7 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 		slog.Error("encode response", "error", err)
 	}
 }
+
 func main() {
 	api := NewAPI(NewMigrationStore())
 	server := &http.Server{Addr: ":8080", Handler: api.routes(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second, IdleTimeout: 30 * time.Second}
